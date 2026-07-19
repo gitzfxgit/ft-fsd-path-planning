@@ -15,6 +15,9 @@ from fsd_path_planning.relocalization.relocalization_base_class import (
     RelocalizationCallable,
     Relocalizer,
 )
+from fsd_path_planning.relocalization.relocalization_information import (
+    RelocalizationInformation,
+)
 from fsd_path_planning.relocalization.skidpad.skidpad_path_data import BASE_SKIDPAD_PATH
 from fsd_path_planning.types import FloatArray, IntArray
 from fsd_path_planning.utils.math_utils import (
@@ -25,6 +28,18 @@ from fsd_path_planning.utils.math_utils import (
 )
 
 PowersetCirceFitResult = list[tuple[FloatArray, IntArray]]
+
+# The first (powerset) fit works with few, noisy cones and can be rotated by a
+# couple of degrees. While driving, the car maps all inner-ring cones, so the
+# circle centers can be re-fitted much more accurately. A refinement replaces
+# the accepted transform only if it is supported by more inner-ring cones and
+# only nudges the rotation.
+INNER_RING_RADIUS = 7.625
+INNER_RING_TOLERANCE_M = 1.0
+MIN_INNER_CONES_PER_CIRCLE = 6
+CENTER_PAIR_DISTANCE_M = 18.25
+MAX_CENTER_PAIR_DISTANCE_ERROR_M = 0.3
+MAX_REFINEMENT_STEP_RAD = np.deg2rad(3.0)
 
 
 def circle_fit_powerset(points: np.ndarray) -> PowersetCirceFitResult:
@@ -208,11 +223,101 @@ class SkidpadRelocalizer(Relocalizer):
     # a few times, each time new cones are detected until a plausible
     # transformation is found
 
+    last_report: str = "no attempt yet"
+    _accepted_support: int = 0
+    _accepted_rotation: float = 0.0
+
     def __init__(self):
         super().__init__()
 
         self.reference_centers = calculate_reference_centers_for_skidpad_path(
             BASE_SKIDPAD_PATH
+        )
+
+    def attempt_relocalization_calculation(
+        self,
+        cones: list[FloatArray],
+        vehicle_position: FloatArray,
+        vehicle_direction: FloatArray,
+    ) -> None:
+        if not self.is_relocalized:
+            super().attempt_relocalization_calculation(
+                cones, vehicle_position, vehicle_direction
+            )
+            if self.is_relocalized:
+                self._accepted_rotation = RelocalizationInformation.from_transform_function(
+                    self.transform_to_known_map_frame
+                ).rotation
+                self.last_report = (
+                    f"ACCEPTED (powerset fit): rotation="
+                    f"{np.rad2deg(self._accepted_rotation):+.2f}deg"
+                )
+            return
+
+        self._attempt_refinement(cones)
+
+    def _attempt_refinement(self, cones: list[FloatArray]) -> None:
+        cones_map = np.row_stack(cones)[:, :2]
+        if len(cones_map) < 2 * MIN_INNER_CONES_PER_CIRCLE:
+            return
+
+        cones_known, _ = self.transform_to_known_map_frame(
+            cones_map, np.zeros(len(cones_map))
+        )
+
+        new_centers_map = []
+        support = 0
+        for reference_center in self.reference_centers:
+            radii = np.linalg.norm(cones_known - reference_center, axis=1)
+            mask_ring = np.abs(radii - INNER_RING_RADIUS) < INNER_RING_TOLERANCE_M
+            if mask_ring.sum() < MIN_INNER_CONES_PER_CIRCLE:
+                return
+            center_x, center_y, radius = circle_fit(cones_map[mask_ring])
+            if np.abs(radius - INNER_RING_RADIUS) > 0.5:
+                return
+            new_centers_map.append([center_x, center_y])
+            support += int(mask_ring.sum())
+
+        # only replace the accepted transform with a better-supported fit
+        if support <= self._accepted_support:
+            return
+
+        new_centers_map = np.array(new_centers_map)
+        center_distance = np.linalg.norm(new_centers_map[0] - new_centers_map[1])
+        if np.abs(center_distance - CENTER_PAIR_DISTANCE_M) > MAX_CENTER_PAIR_DISTANCE_ERROR_M:
+            return
+
+        try:
+            (
+                transform_to_skidpad_frame,
+                transform_to_original_frame,
+            ) = calculate_transformation(
+                self.reference_centers,
+                new_centers_map,
+                self._original_vehicle_position,
+                self._original_vehicle_direction,
+            )
+        except IndexError:
+            return
+
+        new_rotation = RelocalizationInformation.from_transform_function(
+            transform_to_skidpad_frame
+        ).rotation
+        rotation_delta = (
+            new_rotation - self._accepted_rotation + np.pi
+        ) % (2 * np.pi) - np.pi
+        if np.abs(rotation_delta) > MAX_REFINEMENT_STEP_RAD:
+            return
+
+        self._original_to_known_map_transformer = transform_to_skidpad_frame
+        self._known_map_to_original_transformer = transform_to_original_frame
+        self._accepted_support = support
+        self._accepted_rotation = new_rotation
+        self.last_report = (
+            f"REFINED: rotation={np.rad2deg(new_rotation):+.2f}deg "
+            f"(step {np.rad2deg(rotation_delta):+.2f}deg) "
+            f"support={support} inner cones, "
+            f"center distance={center_distance:.2f}m"
         )
 
     def do_relocalization_once(
