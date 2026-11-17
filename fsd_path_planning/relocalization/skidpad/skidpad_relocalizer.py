@@ -3,12 +3,13 @@
 """
 Description: Place the car in the known skidpad map and relocalize it.
 """
+
 from __future__ import annotations
 
 from itertools import combinations
+from typing import List, Tuple
 
 import numpy as np
-from icecream import ic  # pylint: disable=unused-import
 from sklearn.cluster import DBSCAN
 
 from fsd_path_planning.relocalization.relocalization_base_class import (
@@ -27,7 +28,7 @@ from fsd_path_planning.utils.math_utils import (
     rotate,
 )
 
-PowersetCirceFitResult = list[tuple[FloatArray, IntArray]]
+PowersetCirceFitResult = List[Tuple[FloatArray, IntArray]]
 
 # The first (powerset) fit works with few, noisy cones and can be rotated by a
 # couple of degrees. While driving, the car maps all inner-ring cones, so the
@@ -58,9 +59,7 @@ def circle_fit_powerset(points: np.ndarray) -> PowersetCirceFitResult:
             points_of_set = points[set_]
 
             # get the mean distance to the closest point
-            distance = (
-                calc_pairwise_distances(points_of_set, dist_to_self=np.inf) ** 0.5
-            )
+            distance = calc_pairwise_distances(points_of_set, dist_to_self=np.inf) ** 0.5
             min_distances = distance.min(axis=0)
             mean_distance = min_distances.mean()
 
@@ -70,15 +69,9 @@ def circle_fit_powerset(points: np.ndarray) -> PowersetCirceFitResult:
 
             res = circle_fit(points_of_set)
 
-            residual = np.abs(
-                np.linalg.norm(res[:2] - points_of_set, axis=1) - res[2]
-            ).mean()
+            residual = np.abs(np.linalg.norm(res[:2] - points_of_set, axis=1) - res[2]).mean()
 
-            if (
-                abs(res[2] - 7.625) < 1.0
-                and abs(mean_distance - 2.4) < 1.5
-                and residual < 0.4
-            ):
+            if abs(res[2] - 7.625) < 1.0 and abs(mean_distance - 2.4) < 1.5 and residual < 0.4:
                 # print(range_smallest_distance, min_distances, mean_distance, distance)
                 # print(second_smallest_distance)
                 out.append((res, set_))
@@ -99,10 +92,7 @@ def calculate_circle_centers(potential_circles: PowersetCirceFitResult) -> Float
 
     for label_1, label_2 in combinations(unique_labels, 2):
         cluster_centers = np.array(
-            [
-                np.median(potential_centers[labels == label], axis=0)
-                for label in [label_1, label_2]
-            ]
+            [np.median(potential_centers[labels == label], axis=0) for label in [label_1, label_2]]
         )
 
         # distance between the two centers
@@ -112,9 +102,7 @@ def calculate_circle_centers(potential_circles: PowersetCirceFitResult) -> Float
             best_centers = cluster_centers
 
     if best_distance > 0.5:
-        raise ValueError(
-            "Could not find two clusters that have the same distance to the center of the skidpad"
-        )
+        raise ValueError("Could not find two clusters that have the same distance to the center of the skidpad")
 
     cluster_centers = best_centers
 
@@ -130,7 +118,7 @@ def calculate_transformation(
     cluster_centers: FloatArray,
     original_vehicle_position: FloatArray,
     original_vehicle_direction: FloatArray,
-) -> tuple[RelocalizationCallable, RelocalizationCallable]:
+) -> Tuple[RelocalizationCallable, RelocalizationCallable]:
     # Your code here
     """
     Given two reference points and two new points calculate
@@ -138,9 +126,7 @@ def calculate_transformation(
     # convert centers to vehicle frame
     original_vehicle_yaw = angle_from_2d_vector(original_vehicle_direction)
 
-    centers_in_vehicle_frame = rotate(
-        cluster_centers - original_vehicle_position, -original_vehicle_yaw
-    )
+    centers_in_vehicle_frame = rotate(cluster_centers - original_vehicle_position, -original_vehicle_yaw)
 
     mask_is_right = centers_in_vehicle_frame[:, 1] < 0.0
 
@@ -154,15 +140,11 @@ def calculate_transformation(
     translation = np.squeeze(right_reference_center - right_calculated_center)
 
     # calculate the angle between the two reference points
-    from_right_reference_to_left_reference = (
-        left_reference_center - right_reference_center
-    )
+    from_right_reference_to_left_reference = left_reference_center - right_reference_center
     reference_angle = angle_from_2d_vector(from_right_reference_to_left_reference)
 
     # calculate the angle between the two calculated points
-    from_right_calculated_to_left_calculated = (
-        left_calculated_center - right_calculated_center
-    )
+    from_right_calculated_to_left_calculated = left_calculated_center - right_calculated_center
 
     calculated_angle = angle_from_2d_vector(from_right_calculated_to_left_calculated)
 
@@ -230,13 +212,11 @@ class SkidpadRelocalizer(Relocalizer):
     def __init__(self):
         super().__init__()
 
-        self.reference_centers = calculate_reference_centers_for_skidpad_path(
-            BASE_SKIDPAD_PATH
-        )
+        self.reference_centers = calculate_reference_centers_for_skidpad_path(BASE_SKIDPAD_PATH)
 
     def attempt_relocalization_calculation(
         self,
-        cones: list[FloatArray],
+        cones: List[FloatArray],
         vehicle_position: FloatArray,
         vehicle_direction: FloatArray,
     ) -> None:
@@ -256,8 +236,8 @@ class SkidpadRelocalizer(Relocalizer):
 
         self._attempt_refinement(cones)
 
-    def _attempt_refinement(self, cones: list[FloatArray]) -> None:
-        cones_map = np.row_stack(cones)[:, :2]
+    def _attempt_refinement(self, cones: List[FloatArray]) -> None:
+        cones_map = np.vstack(cones)[:, :2]
         if len(cones_map) < 2 * MIN_INNER_CONES_PER_CIRCLE:
             return
 
@@ -322,11 +302,11 @@ class SkidpadRelocalizer(Relocalizer):
 
     def do_relocalization_once(
         self,
-        cones: list[FloatArray],
+        cones: List[FloatArray],
         vehicle_position: FloatArray,
         vehicle_direction: FloatArray,
-    ) -> tuple[RelocalizationCallable, RelocalizationCallable] | None:
-        cones_array = np.row_stack(cones)
+    ) -> Tuple[RelocalizationCallable, RelocalizationCallable] | None:
+        cones_array = np.vstack(cones)
         cones_array_xy = cones_array[:, :2]
 
         # only keep 20 closest cones

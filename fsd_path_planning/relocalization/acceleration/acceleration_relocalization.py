@@ -5,6 +5,8 @@ Description: Place the car in the known accelearation map and relocalize it.
 """
 from __future__ import annotations
 
+from typing import List, Tuple
+
 import numpy as np
 
 from fsd_path_planning.relocalization.relocalization_base_class import (
@@ -47,7 +49,7 @@ MAX_LANE_WIDTH_M = 4.0
 
 def fit_two_parallel_rows(
     points: FloatArray, initial_is_left: np.ndarray
-) -> tuple[float, float, float, np.ndarray, np.ndarray] | None:
+) -> Tuple[float, float, float, np.ndarray, np.ndarray] | None:
     """
     Fit two parallel lines (shared slope, one intercept per cone row) through
     the cone rows using least squares. Row membership and outliers are
@@ -120,7 +122,7 @@ class AccelerationRelocalizer(Relocalizer):
 
     def _build_transforms(
         self,
-    ) -> tuple[RelocalizationCallable, RelocalizationCallable]:
+    ) -> Tuple[RelocalizationCallable, RelocalizationCallable]:
         theta = self._theta
         lateral = np.array([0.0, self._lateral])
         anchor = self._anchor.copy()
@@ -135,7 +137,7 @@ class AccelerationRelocalizer(Relocalizer):
 
     def attempt_relocalization_calculation(
         self,
-        cones: list[FloatArray],
+        cones: List[FloatArray],
         vehicle_position: FloatArray,
         vehicle_direction: FloatArray,
     ) -> None:
@@ -151,13 +153,13 @@ class AccelerationRelocalizer(Relocalizer):
 
     def _fit_rows(
         self,
-        cones: list[FloatArray],
+        cones: List[FloatArray],
         vehicle_position: FloatArray,
         vehicle_direction: FloatArray,
     ) -> dict | None:
         """Fit the two cone rows in the car's local frame. Returns the fit
         summary, or None (with self._last_reject set) if unusable."""
-        all_cones = np.row_stack(cones)
+        all_cones = np.vstack(cones)
 
         if len(all_cones) < MIN_INLIER_CONES:
             self._last_reject = (
@@ -239,10 +241,10 @@ class AccelerationRelocalizer(Relocalizer):
 
     def do_relocalization_once(
         self,
-        cones: list[FloatArray],
+        cones: List[FloatArray],
         vehicle_position: FloatArray,
         vehicle_direction: FloatArray,
-    ) -> tuple[RelocalizationCallable, RelocalizationCallable] | None:
+    ) -> Tuple[RelocalizationCallable, RelocalizationCallable] | None:
         # Accept immediately with the path running straight from the car's
         # current pose along its heading — the fit does NOT set the start
         # vector, so initial steering is ~0. Gentle trimming toward the
@@ -275,7 +277,7 @@ class AccelerationRelocalizer(Relocalizer):
 
     def _track(
         self,
-        cones: list[FloatArray],
+        cones: List[FloatArray],
         vehicle_position: FloatArray,
         vehicle_direction: FloatArray,
     ) -> None:
