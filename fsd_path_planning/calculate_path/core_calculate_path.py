@@ -12,7 +12,6 @@ from dataclasses import dataclass, field
 from typing import List, Optional, Tuple, cast
 
 import numpy as np
-from icecream import ic  # pylint: disable=unused-import
 
 from fsd_path_planning.calculate_path.path_calculator_helpers import (
     PathCalculatorHelpers,
@@ -332,7 +331,7 @@ class CalculatePath:
             new_points = last_point + direction * np.arange(30)[:, None]
 
         new_points = new_points[1:]
-        return np.row_stack((path_update, new_points))
+        return np.vstack((path_update, new_points))
 
     def create_path_for_mpc_from_path_update(
         self, path_update: FloatArray
@@ -453,7 +452,7 @@ class CalculatePath:
             + normalize_last_axis(car_to_first_point[None])[0] * 0.2
         )
 
-        path_update = np.row_stack((new_point, path_update))
+        path_update = np.vstack((new_point, path_update))
 
         return path_update
 
